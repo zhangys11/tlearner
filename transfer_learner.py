@@ -6,6 +6,7 @@ from tensorflow.keras.models import Model
 from tensorflow.python.keras.utils.np_utils import to_categorical
 from tensorflow.keras.callbacks import EarlyStopping,ModelCheckpoint,ReduceLROnPlateau
 from tensorflow.keras import backend as K
+import tensorflow.lite
 
 import numpy as np
 import os
@@ -14,6 +15,9 @@ import pickle
 import matplotlib
 from matplotlib import pyplot as plt
 import seaborn as sns
+import shutil
+from tqdm import tqdm
+from PIL import Image
 
 from sklearn.utils import shuffle
 from sklearn.model_selection import train_test_split
@@ -31,6 +35,7 @@ class transfer_learner():
         self.MODEL_NAME = MODEL_NAME
         self.W = W
         self.BEST_MODEL = None # not trained or loaded
+        self.MASK = None
 
     def load_best_model(self):
         return self.get_best_model()
@@ -71,26 +76,34 @@ class transfer_learner():
         self.class_names = data_subdir_list
 
         img_data_list=[]
+        y_labels = []
 
         if (use_mask):
-            mask = load_mask()
+            self.load_mask()
         
         for i, dataset in enumerate(data_subdir_list):
             img_list=os.listdir(DIR+'/'+ dataset)
             print ('Loaded the images of dataset-'+'{}\n'.format(dataset))
             for img in img_list:
-                img_path = DIR + '/'+ dataset + '/'+ img        
-                img = image.load_img(img_path, target_size=(224, 224))
+                img_path = DIR + '/'+ dataset + '/'+ img     
+
+                try:
+                    img = image.load_img(img_path, target_size=(self.W, self.W))
+                except OSError:
+                    print('Image load error: ' + img_path)
+                    continue
+                
                 x = image.img_to_array(img)
                 x = np.expand_dims(x, axis=0)
 
-                if (use_mask and mask):
-                    kill_border(x, mask)
+                if (use_mask):
+                    kill_border(x, self.MASK)
 
                 x = efficientnet.preprocess_input(x)
                 #x = x/255
                 # print('Input image shape:', x.shape)
                 img_data_list.append(x)
+                y_labels.append(i)
                 
         self.num_of_samples = len(img_data_list)
         img_data = np.array(img_data_list)
@@ -103,9 +116,9 @@ class transfer_learner():
         print (img_data.shape)
 
         # convert class labels to on-hot encoding
-        Y = to_categorical(self.labels, self.num_classes)
+        Y = to_categorical(y_labels, self.num_classes)
         
-        x,y = shuffle(img_data, Y)
+        x, y = shuffle(img_data, Y)
         # Split the dataset
         self.X_train, self.X_val, self.y_train, self.y_val = train_test_split(x, y, test_size = test_split_size)
 
@@ -128,11 +141,37 @@ class transfer_learner():
 
             print("pickled in ", PKL_PATH)
 
+    def load_mask(self, display = False):
 
-    def train_custom_model(self,
+        mask = Image.open('mask_fundus.bmp')
+        mask = mask.resize((self.W, self.W), Image.ANTIALIAS) # resize to target image size
+        mask = np.asarray(mask)
+
+        if display:
+            plt.imshow(mask)
+            plt.show()
+            print("mask shape: ", mask.shape)
+
+        self.MASK = mask
+
+    def continue_train(self,
     model_subtype = "EfficientNetB1", 
     use_class_weights = False,
     batch = 8, epochs = [10,0], optimizer = "adam"):
+
+        self.load_best_model()
+        return self.train_custom_model(
+            model_subtype, 
+            use_class_weights,
+            batch, 
+            epochs, 
+            optimizer, 
+            True)
+
+    def train(self,
+    model_subtype = "EfficientNetB1", 
+    use_class_weights = False,
+    batch = 8, epochs = [10,0], optimizer = "adam", use_existing_model = False):
         '''
         If epochs[1] = 0, perform one-stage training. 
         If epochs[1] > 0, perform two-stage training (i.e., unfreeze last N fc layers & unfreeze all layers)
@@ -140,20 +179,23 @@ class transfer_learner():
 
         ###### PRETRAINED WEIGHTS ##########
 
-        image_input = Input(shape=(self.W, self.W, 3))
-        num_classes = self.y_train.shape[-1]
+        if use_existing_model: # continue training use the last best model
+            custom_model = self.get_best_model()
+        else:
+            image_input = Input(shape=(self.W, self.W, 3))
+            num_classes = self.y_train.shape[-1]
 
-        f_createmodel = getattr(efficientnet, model_subtype)
-        model = f_createmodel(input_tensor=image_input, 
-        include_top=True,weights='imagenet')         
+            f_createmodel = getattr(efficientnet, model_subtype)
+            model = f_createmodel(input_tensor=image_input, 
+            include_top=True,weights='imagenet')         
+            
+            last_layer = model.layers[-2].output # model.get_layer('global_average_pooling2d_3').output
+            #x= Flatten(name='flatten')(last_layer)
+            out = Dense(num_classes, activation='softmax', name='output')(last_layer)
+            custom_model = Model(image_input, out)
+
 
         ####### STAGE I - Retrain the last N fc layers #########
-
-        
-        last_layer = model.layers[-2].output # model.get_layer('global_average_pooling2d_3').output
-        #x= Flatten(name='flatten')(last_layer)
-        out = Dense(num_classes, activation='softmax', name='output')(last_layer)
-        custom_model = Model(image_input, out)
 
         for layer in custom_model.layers[:-6]:
             layer.trainable = False
@@ -242,9 +284,25 @@ class transfer_learner():
         '''
 
         if (not self.BEST_MODEL):
-            self.BEST_MODEL = load_model(self.MODEL_NAME + "_best.hdf5", compile = True)
+            self.BEST_MODEL = load_model(self.MODEL_NAME + "_best.hdf5", 
+            compile = True) # 使用自定义的loss或者metric时，应compile = False，并手动调用compile
         return self.BEST_MODEL
 
+    def convert_to_tflite(self, path = None):
+        converter = tensorflow.lite.TFLiteConverter.from_keras_model(self.get_best_model)
+        tflite_model = converter.convert()
+
+        # Save the model.
+        if (path == None):
+            fname = self.MODEL_NAME + '.tflite'
+        else:
+            fname = path
+
+        with open(fname, 'wb') as f:
+            f.write(tflite_model)
+
+        print('tflite model saved to: ' + fname)
+        return fname
 
     def evaluate(self, N = 30):
         custom_model = self.get_best_model()
@@ -253,12 +311,13 @@ class transfer_learner():
 
         fig = plt.figure(figsize=(20, 20*(N/10+1)))
         for i in range(N):    
-            p = custom_model.predict(np.expand_dims(self.X_test[i], axis=0))
+            p = custom_model.predict(np.expand_dims(self.X_val[i], axis=0))
             ax = fig.add_subplot(int(N/3)+1, 3, i+1)
-            x = restore_image(self.X_test[i])
+            x = restore_image(self.X_val[i])
             ax.imshow(x)
-            # ax.imshow((X_test[i] - X_test[i].min())/(X_test[i].max()-X_test[i].min()))
-            title = 'Predict: {}\n {} \n Actual: {}'.format(self.class_names[int(p.argmax(-1))], np.round(p[0],2), names[int(Y_test[i].argmax(-1))])
+            # ax.imshow((X_val[i] - X_val[i].min())/(X_val[i].max()-X_val[i].min()))
+            title = 'Predict: {}\n {} \n Actual: {}'.format(self.class_names[int(p.argmax(-1))], np.round(p[0],2), 
+            self.class_names[int(self.y_val[i].argmax(-1))])
             ax.set_title(title)
 
 
@@ -270,7 +329,8 @@ class transfer_learner():
         x = np.expand_dims(x, axis=0)
 
         if (use_mask):
-            kill_border(x, load_mask())
+            self.load_mask()
+            kill_border(x, self.MASK)
 
         x = efficientnet.preprocess_input(x)
 
@@ -293,7 +353,7 @@ class transfer_learner():
         Only available when this is a binary classification problem.
         '''
 
-        N = len(self.X_test)
+        N = len(self.X_val)
 
         fig = plt.figure(figsize=(20, 12*(N/10+1)))
 
@@ -305,19 +365,19 @@ class transfer_learner():
         for i in range(N):
         
             # For test set, we already preprocessing by the mask. 
-            p = self.get_best_model().predict(np.expand_dims(self.X_test[i], axis=0))
+            p = self.get_best_model().predict(np.expand_dims(self.X_val[i], axis=0))
             ax = fig.add_subplot(N/3+1, 3, i+1)
         
             probs.append(1-p[0]) # treat C1 as one class, all others as the second
             y_pred.append(int(p.argmax(-1)))
-            y_true.append(int(self.Y_test[i].argmax(-1)))
+            y_true.append(int(self.y_val[i].argmax(-1)))
         
             # ax.imshow((X_test[i] - X_test[i].min())/(X_test[i].max()-X_test[i].min()),aspect = 0.75)    
-            img = restore_image( self.X_test[i] )
+            img = restore_image( self.X_val[i] )
             ax.imshow(img)
 
             title = 'Predict: {}, Actual: {}\nProb: {}'.format(self.class_names[int(p.argmax(-1))], 
-                                                            self.class_names[int(self.Y_test[i].argmax(-1))], 
+                                                            self.class_names[int(self.y_val[i].argmax(-1))], 
                                                             np.round(p,3))
             ax.set_title(title)
             ax.axis('off')
@@ -391,6 +451,37 @@ class transfer_learner():
 
         return y_pred, y_true, probs
 
+
+    # move images from src to dest subdirs by prediction results
+    def batch_classification(self, src_dir, target_dir, use_mask = False):
+        if use_mask:
+            self.load_mask()
+        
+        for l in self.class_names:
+            os.makedirs(os.path.join(target_dir, l), exist_ok=True) # create the target sub folders if not exist
+
+        for root, dirs, files in tqdm(os.walk(src_dir)):      
+            for file in files:
+                if file.endswith('.jpg') or file.endswith('.JPG') or file.endswith('.png'):
+                    img_path = os.path.join(root, file)
+                    try: 
+                        img = image.load_img(img_path, 
+                        target_size=(self.W, self.W))
+                        x = image.img_to_array(img)
+                        x = np.expand_dims(x, axis=0)
+
+                        if (use_mask):
+                            kill_border(x, self.MASK)
+
+                        x = efficientnet.preprocess_input(x)
+                        p = self.get_best_model().predict(x)                
+                        cid = int(p.argmax(-1))
+                        cname = self.class_names[cid]
+
+                        shutil.move(img_path, os.path.join(target_dir, cname, file))
+                    except Exception as err: 
+                        print(err)
+
 def plot_history(hist):
 
     # visualizing losses and accuracy
@@ -456,8 +547,6 @@ def multiclass_to_binary(c, t = 0):
         return 0
 
 
-
-
 ######### BELOW ARE FUNDUS IMAGE SPECIFIC FUNCTIONS ############
 
 def kill_border(data, mask):
@@ -468,6 +557,9 @@ def kill_border(data, mask):
 
     assert (len(data.shape)==4)  #4D arrays
     assert (data.shape[3]==1 or data.shape[3]==3)  #check the channel is 1 or 3
+    assert (data.shape[1] == mask.shape[0])
+    assert (data.shape[2] == mask.shape[1])
+    
     height = data.shape[2]
     width = data.shape[1]
     for i in range(data.shape[0]):  #loop over the full images
@@ -483,14 +575,3 @@ def inside_FOV(x, y, mask):
         return True
     else:
         return False
-
-from PIL import Image
-def load_mask():
-    mask = Image.open('mask_fundus.bmp')
-    mask = mask.resize((224,224), Image.ANTIALIAS) # resize to target image size
-    plt.imshow(mask)
-
-    mask = np.asarray(mask)
-    print("mask shape: ", mask.shape)
-
-    return mask

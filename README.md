@@ -351,3 +351,8 @@ For tfjs apps, use EfficientNetB0 or EfficientNetB1; For tf-lite apps, use Effic
 </tr>
 </tbody>
 </table>
+
+# How to use
+
+from tlearner.efficientnet import transfer_learner
+learner = transfer_learner("flower_customEfficientNetB0_model", W = 224)
