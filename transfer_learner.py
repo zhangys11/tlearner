@@ -317,25 +317,13 @@ class transfer_learner():
 
         best_model_path = self.MODEL_NAME + "_best.hdf5"
 
-        if v1:
-            converter = tensorflow.compat.v1.lite.TFLiteConverter.from_keras_model_file(best_model_path)
-        else:
-            converter = tensorflow.lite.TFLiteConverter.from_keras_model(best_model_path)
-            # converter.experimental_new_converter = True
-        
-        tflite_model = converter.convert()
-
         # Save the model.
         if (path == None):
             fname = self.MODEL_NAME + '.tflite'
         else:
             fname = path
 
-        with open(fname, 'wb') as f:
-            f.write(tflite_model)
-
-        print('tflite model saved to: ' + fname)
-        return fname
+        convert_keras_to_tflite(best_model_path, fname, v1) 
 
     def evaluate(self, N = 30):
         custom_model = self.get_best_model()
@@ -514,6 +502,24 @@ class transfer_learner():
                         shutil.move(img_path, os.path.join(target_dir, cname, file))
                     except Exception as err: 
                         print(err)
+
+
+
+def convert_keras_to_tflite(source, target, v1 = False):
+
+    if v1:
+        converter = tensorflow.compat.v1.lite.TFLiteConverter.from_keras_model_file(source)
+    else:
+        converter = tensorflow.lite.TFLiteConverter.from_keras_model(source)
+        # converter.experimental_new_converter = True
+    
+    tflite_model = converter.convert()
+
+    with open(target, 'wb') as f:
+        f.write(tflite_model)
+
+    print('tflite model saved to: ' + target)
+
 
 def plot_history(hist):
 
