@@ -7,3 +7,9 @@ flower_efficientnet_dataset.pkl
 .ipynb_checkpoints/5.26 Lightweight Models Flower - EfficientNetB0-checkpoint.ipynb
 fundus_efficientnet_dataset.pkl
 fundus_C3_customEfficientNetB4_model_best2.hdf5
+notebooks/flower_customEfficientNetB0_model_best.hdf5
+notebooks/fundus_C3_customEfficientNetB4_model_best.hdf5
+fundus_C3_customEfficientNetB4_model_best.hdf5
+flower_customEfficientNetB0_model_best.hdf5
+fundus_C3_customEfficientNetB4_model_best.hdf5
+flower_customEfficientNetB0_model_best.hdf5
