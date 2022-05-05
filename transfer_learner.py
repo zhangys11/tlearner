@@ -7,6 +7,9 @@ from tensorflow.python.keras.utils.np_utils import to_categorical
 from tensorflow.keras.callbacks import EarlyStopping,ModelCheckpoint,ReduceLROnPlateau
 from tensorflow.keras import backend as K
 import tensorflow.lite
+from IPython.display import SVG
+from tensorflow.keras.utils import model_to_dot, plot_model
+import tensorflow.compat.v1.lite
 
 import numpy as np
 import os
@@ -38,6 +41,12 @@ class transfer_learner():
         self.MASK = None
 
     def load_best_model(self):
+        '''
+        Reload the model from disk. 
+        Notice: This method will release the current model object.
+        '''
+        del self.BEST_MODEL
+        self.BEST_MODEL = None
         return self.get_best_model()
 
     def load_dataset_from_pkl(self, PKL_PATH = None):
@@ -160,7 +169,7 @@ class transfer_learner():
     batch = 8, epochs = [10,0], optimizer = "adam"):
 
         self.load_best_model()
-        return self.train_custom_model(
+        return self.train(
             model_subtype, 
             use_class_weights,
             batch, 
@@ -240,13 +249,16 @@ class transfer_learner():
         del custom_model
         K.clear_session()
         
-        if epochs[1]>0: # we cannot benefit from Phase II training. Retraining all layers causes acc drops to  around 0.56.
+        if epochs[1] > 0: # we cannot benefit from Phase II training. Retraining all layers causes acc drops to  around 0.56.
             
             ########## STAGE II - train all layers #############
             t=time.time()
 
             custom_model = load_model(self.MODEL_NAME + '_best.hdf5')    
 
+            # use a default model name for Phase II to avoid overwriting Phase I
+            mcp_save2 = ModelCheckpoint(self.MODEL_NAME + '_best2.hdf5', save_best_only=True, monitor='val_loss', mode='min')
+        
             for layer in custom_model.layers: # unlock all layers
                 layer.trainable = True
 
@@ -260,7 +272,7 @@ class transfer_learner():
                                     batch_size= batch, #8, 
                                     epochs=epochs[1], 
                                     verbose=1,
-                                    callbacks = [earlyStopping, mcp_save],
+                                    callbacks = [earlyStopping, mcp_save2],
                                     validation_data=(self.X_val, self.y_val)) # batch_size 32 epochs 12
 
             print('Phase II Training time: %s' % (t - time.time()))
@@ -272,6 +284,10 @@ class transfer_learner():
             
             del custom_model
             K.clear_session()
+
+            print('-----------------')
+            print('There are two training stages. You need to judge which one is the best by checking the training curve (plot_two_stage_hist()).')
+            print('-----------------')
 
             return hist.history, hist2.history
 
@@ -288,8 +304,25 @@ class transfer_learner():
             compile = True) # 使用自定义的loss或者metric时，应compile = False，并手动调用compile
         return self.BEST_MODEL
 
-    def convert_to_tflite(self, path = None):
-        converter = tensorflow.lite.TFLiteConverter.from_keras_model(self.get_best_model)
+    def plot_best_model(self):
+        if (self.BEST_MODEL):
+            save_path = self.MODEL_NAME + '.png'
+            plot_model(self.BEST_MODEL, show_shapes=True, 
+            show_layer_names=True, to_file = save_path)
+            SVG(model_to_dot(self.BEST_MODEL, show_shapes=True, 
+            show_layer_names=True).create(prog='dot', format='svg'))
+            print('The model architecture plot has been saved to ' + save_path)
+
+    def convert_to_tflite(self, path = None, v1 = False):
+
+        best_model_path = self.MODEL_NAME + "_best.hdf5"
+
+        if v1:
+            converter = tensorflow.compat.v1.lite.TFLiteConverter.from_keras_model_file(best_model_path)
+        else:
+            converter = tensorflow.lite.TFLiteConverter.from_keras_model(best_model_path)
+            # converter.experimental_new_converter = True
+        
         tflite_model = converter.convert()
 
         # Save the model.
@@ -490,6 +523,39 @@ def plot_history(hist):
     train_acc=hist['accuracy']# + hist2['accuracy']
     val_acc=hist['val_accuracy']# + hist2['val_accuracy']
     xc=range(1, len(train_loss) + 1) # epochs #  + epochs[1]
+
+    # plt.style.use(['classic'])
+    #print plt.style.available # use bmh, classic,ggplot for big pictures
+
+    plt.figure(1,figsize=(7,5))
+    plt.plot(xc,train_loss)
+    plt.plot(xc,val_loss)
+    plt.xlabel('num of Epochs')
+    plt.ylabel('loss')
+    plt.title('train_loss vs val_loss')
+    plt.grid(True)
+    plt.legend(['train','val'])
+    plt.show()
+
+    plt.figure(2,figsize=(7,5))
+    plt.plot(xc,train_acc)
+    plt.plot(xc,val_acc)
+    plt.xlabel('num of Epochs')
+    plt.ylabel('accuracy')
+    plt.title('train_acc vs val_acc')
+    plt.grid(True)
+    plt.legend(['train','val'])
+    plt.show()
+
+
+def plot_two_stage_hist(hist1, hist2, epochs):
+    
+    # visualizing losses and accuracy
+    train_loss = hist1.history['loss'] + hist2.history['loss']
+    val_loss = hist1.history['val_loss'] + hist2.history['val_loss']
+    train_acc = hist1.history['accuracy'] + hist2.history['accuracy']
+    val_acc = hist1.history['val_accuracy'] + hist2.history['val_accuracy']
+    xc=range(1, epochs + 1) # epochs
 
     # plt.style.use(['classic'])
     #print plt.style.available # use bmh, classic,ggplot for big pictures
