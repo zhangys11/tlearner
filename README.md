@@ -5,6 +5,7 @@ The series of Efficient Net models are supported.
 There is always a trade-off between model size and accuracy. Our guideline is as follows:     
 For tfjs apps, use EfficientNetB0 or EfficientNetB1; For tf-lite apps, use EfficientNetB2 ~ B4; For desktop apps, use EfficientNetB5 and above. 
 
+The following table is from keras website:
 <table>
 <thead>
 <tr>
@@ -356,3 +357,12 @@ For tfjs apps, use EfficientNetB0 or EfficientNetB1; For tf-lite apps, use Effic
 
 from tlearner.efficientnet import transfer_learner
 learner = transfer_learner("flower_customEfficientNetB0_model", W = 224)
+
+# Jupyter notebooks
+
+Under /notebooks, we provide two examples. One is flower image classification; the other is fundus image classification.
+
+# Deployment
+
+After training, you will get a keras h5 model file. You can further convert it to tflite format, or tfjs format (efficient net is not supported yet).  
+Then you can deploy on mobile device or browser-based apps.
