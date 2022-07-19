@@ -153,7 +153,7 @@ class transfer_learner():
 
     def load_mask(self, display = False):
 
-        mask = Image.open(pathlib.Path(__file__).resolve().parent + '/mask_fundus.bmp')
+        mask = Image.open(pathlib.Path(__file__).resolve().parent / 'mask_fundus.bmp')
         mask = mask.resize((self.W, self.W), Image.ANTIALIAS) # resize to target image size
         mask = np.asarray(mask)
 
@@ -555,13 +555,17 @@ def plot_history(hist):
     plt.show()
 
 
-def plot_two_stage_hist(hist1, hist2, epochs):
-    
+def plot_two_stage_hist(hist1, hist2, epochs = None):
+
     # visualizing losses and accuracy
-    train_loss = hist1.history['loss'] + hist2.history['loss']
-    val_loss = hist1.history['val_loss'] + hist2.history['val_loss']
-    train_acc = hist1.history['accuracy'] + hist2.history['accuracy']
-    val_acc = hist1.history['val_accuracy'] + hist2.history['val_accuracy']
+    train_loss = hist1['loss'] + hist2['loss']
+    val_loss = hist1['val_loss'] + hist2['val_loss']
+    train_acc = hist1['accuracy'] + hist2['accuracy']
+    val_acc = hist1['val_accuracy'] + hist2['val_accuracy']
+    
+    if epochs is None:
+        epochs = len(train_loss)
+
     xc=range(1, epochs + 1) # epochs
 
     # plt.style.use(['classic'])

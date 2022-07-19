@@ -1,13 +1,11 @@
 Metadata-Version: 2.1
 Name: tlearner
-Version: 0.0.9
+Version: 0.1.1
 Summary: A python library for neural network transfer learning.
 Home-page: https://github.com/zhangys11/tlearner
 Author: Yinsheng Zhang (Ph.D.)
 Author-email: oo@zju.edu.cn
-License: UNKNOWN
 Project-URL: Bug Tracker, https://github.com/zhangys11/tlearner/issues
-Platform: UNKNOWN
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: GNU Lesser General Public License v3 or later (LGPLv3+)
 Classifier: Operating System :: OS Independent
@@ -420,4 +418,3 @@ Under /notebooks, we provide two examples. One is flower image classification; t
 
 After training, you will get a keras h5 model file. You can further convert it to tflite format, or tfjs format (efficient net is not supported yet).  
 Then you can deploy on mobile device or browser-based apps.
-
