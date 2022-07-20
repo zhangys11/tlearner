@@ -1,14 +1,11 @@
 from tensorflow.keras.applications import efficientnet
 from tensorflow.keras.preprocessing import image
-from tensorflow.keras.models import load_model
-from tensorflow.keras.layers import Dense, Activation, Flatten, BatchNormalization, LayerNormalization, Input
-from tensorflow.keras.models import Model
+from tensorflow.keras.models import load_model, Model
 from tensorflow.python.keras.utils.np_utils import to_categorical
 from tensorflow.keras.callbacks import EarlyStopping,ModelCheckpoint,ReduceLROnPlateau
 from tensorflow.keras import backend as K
-import tensorflow.lite
-from IPython.display import SVG
 from tensorflow.keras.utils import model_to_dot, plot_model
+import tensorflow.lite
 import tensorflow.compat.v1.lite
 
 import numpy as np
@@ -19,16 +16,17 @@ import pickle
 import matplotlib
 from matplotlib import pyplot as plt
 import seaborn as sns
+from IPython.display import SVG
 import shutil
 from tqdm import tqdm
 from PIL import Image
 
-from sklearn.utils import shuffle
+from sklearn.utils import class_weight, shuffle
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import GridSearchCV
-from sklearn.utils import class_weight
+from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import confusion_matrix, roc_curve, roc_auc_score, auc
 
+import scipy
 
 class transfer_learner():
 
@@ -55,18 +53,66 @@ class transfer_learner():
 
         if PKL_PATH:
             with open(PKL_PATH, 'rb') as f:
-                dict = pickle.load(f)
+                dic = pickle.load(f)
+
+            if 'X_train' in dic and 'X_val' in dic and 'y_train' in dic and 'y_val' in dic:
+                
+                self.X_train = dic['X_train']
+                self.X_val = dic['X_val']                
+                self.y_train = dic['y_train']
+                self.y_val = dic['y_val']
+
+                if 'X_test' in dic and 'y_test' in dic: # ldad optional test set
+                    self.X_test = dic['X_test']
+                    self.y_test = dic['y_test']
+
+            elif 'X' in dic and 'y' in dic:
+
+                X = dic['X']
+                y = dic['y']
+
+                if len(y.shape) <= 1:
+                    y_onehot = OneHotEncoder().fit_transform(y.reshape(-1, 1))
+                else:
+                    y_onehot = y # already one-hot encoded
+
+                #Shuffle the dataset
+                X_shuffled, y_shuffled = shuffle(X,y_onehot)
+                # Split the dataset
+                X_train, X_test, y_train, y_test = train_test_split(X_shuffled, y_shuffled, test_size=0.1)
+
+                # Split the dataset
+                X_train, X_val, y_train, y_val = train_test_split(X_train, y_train, test_size=0.2)
+
+                if isinstance(X_train,scipy.sparse.csr.csr_matrix):
+                    X_train = X_train.todense()
+                self.X_train = X_train
+
+                if isinstance(X_val,scipy.sparse.csr.csr_matrix):
+                    X_val = X_val.todense()
+                self.X_val = X_val
+
+                if isinstance(y_train,scipy.sparse.csr.csr_matrix):
+                    y_train = y_train.todense()
+                self.y_train = y_train
+
+                if isinstance(y_val,scipy.sparse.csr.csr_matrix):
+                    y_val = y_val.todense()
+                self.y_val = y_val
+
+                if isinstance(X_test,scipy.sparse.csr.csr_matrix):
+                    X_test = X_test.todense()
+                self.X_test = X_test
+
+                if isinstance(y_test,scipy.sparse.csr.csr_matrix):
+                    y_test = y_test.todense()
+                self.y_test = y_test
             
-            self.X_train = dict['X_train']
-            self.X_val = dict['X_val']
-            self.y_train = dict['y_train']
-            self.y_val = dict['y_val']
-            
-            self.num_classes = dict['num_classes']
+            self.num_classes = dic['num_classes']
 
             # labels and class_names are the same.
-            self.labels = dict['class_names']
-            self.class_names = dict['class_names']
+            self.labels = dic['class_names']
+            self.class_names = dic['class_names']
 
         else:
             print("Unable to locate the pkl file: ", PKL_PATH) 
@@ -134,20 +180,19 @@ class transfer_learner():
 
         if PKL_PATH:
             # PKL_PATH = '../data/fundus/C5/C5_202108.pkl' # '../data/fundus/C5/C5_202108.pkl' # the unmasked imgs
-            dict = {}
+            dic = {}
 
-            dict['X_train'] = np.array(self.X_train, dtype=np.int8)
-            dict['X_val'] = np.array(self.X_val, dtype=np.int8)
-            dict['y_train'] = np.array(self.y_train, dtype=np.int8)
-            dict['y_val'] = np.array(self.y_val, dtype=np.int8)
+            dic['X_train'] = np.array(self.X_train, dtype=np.int8)
+            dic['X_val'] = np.array(self.X_val, dtype=np.int8)
+            dic['y_train'] = np.array(self.y_train, dtype=np.int8)
+            dic['y_val'] = np.array(self.y_val, dtype=np.int8)
             
-            dict['num_classes'] = self.num_classes
-            dict['labels'] = self.labels
-            dict['class_names'] = self.class_names            
+            dic['num_classes'] = self.num_classes
+            dic['labels'] = self.labels
+            dic['class_names'] = self.class_names            
 
-            import pickle
             with open(PKL_PATH, 'wb') as f:
-                pickle.dump(dict, f)
+                pickle.dump(dic, f)
 
             print("pickled in ", PKL_PATH)
 
@@ -297,12 +342,13 @@ class transfer_learner():
 
     def get_best_model(self):
         '''
-        If self.MODEL_NAME + "_best.hdf5" exists in local folder, this will directly load the model without training.
+        If self.MODEL_NAME + "_best(2).hdf5" exists in local folder, this will directly load the model without training.
         '''
-
         if (not self.BEST_MODEL):
-            self.BEST_MODEL = load_model(self.MODEL_NAME + "_best.hdf5", 
-            compile = True) # 使用自定义的loss或者metric时，应compile = False，并手动调用compile
+            best_model_path = self.MODEL_NAME + "_best2.hdf5" # for two-stage training, use _best2.
+            if not os.path.isfile(best_model_path):
+                best_model_path = self.MODEL_NAME + "_best.hdf5"
+            self.BEST_MODEL = load_model(best_model_path, compile = True) # 使用自定义的loss或者metric时，应compile = False，并手动调用compile
         return self.BEST_MODEL
 
     def plot_best_model(self):
@@ -326,22 +372,34 @@ class transfer_learner():
 
         convert_keras_to_tflite(best_model_path, fname, v1) 
 
-    def evaluate(self, N = 30):
+    def evaluate(self, X=None, y=None, N = 30):
+
+        if X is None:
+            X = self.X_val
+        if y is None:
+            y = self.y_val
+
         custom_model = self.get_best_model()
 
-        N = min(N, len(self.X_val))
+        matched = []
+        N = min(N, len(X))
 
         fig = plt.figure(figsize=(20, 20*(N/10+1)))
         for i in range(N):    
-            p = custom_model.predict(np.expand_dims(self.X_val[i], axis=0))
+            p = custom_model.predict(np.expand_dims(X[i], axis=0))
             ax = fig.add_subplot(int(N/3)+1, 3, i+1)
-            x = restore_image(self.X_val[i])
+            x = restore_image(X[i])
             ax.imshow(x)
             # ax.imshow((X_val[i] - X_val[i].min())/(X_val[i].max()-X_val[i].min()))
-            title = 'Predict: {}\n {} \n Actual: {}'.format(self.class_names[int(p.argmax(-1))], np.round(p[0],2), 
-            self.class_names[int(self.y_val[i].argmax(-1))])
+            title = 'Predict: {}\n {} \n Actual: {}'.format(self.class_names[int(p.argmax(-1))], 
+            np.round(p[0],2), self.class_names[int(y[i].argmax(-1))])
             ax.set_title(title)
 
+            matched.append(p.argmax(-1) == y[i].argmax(-1))
+
+        plt.show()
+
+        return np.mean(matched) # return mean acc
 
     def predict_file(self, img_path, display = True, use_mask = False):
 
