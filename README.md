@@ -2,7 +2,7 @@
 
 This project is a successor of our early endeaver of transfer-learning-based CAD (computer-aided diagnosis):   
     
-<pre>Development of an Automated Screening System for Retinopathy of Prematurity Using a Deep Neural Network for Wide-angle Retinal Images [J]. 2019, doi: 10.1109/ACCESS.2018.2881042</pre>
+<p>Development of an Automated Screening System for Retinopathy of Prematurity Using a Deep Neural Network for Wide-angle Retinal Images [J]. 2019, doi: 10.1109/ACCESS.2018.2881042</p>
 
 
 # Functions
