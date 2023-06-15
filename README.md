@@ -1,11 +1,18 @@
 # About
 
+This project is a successor of our early endeaver of deep-learning-based CAD (computer-aided diagnosis):   
+    
+    Development of an Automated Screening System for Retinopathy of Prematurity Using a Deep Neural Network for Wide-angle Retinal Images [J]. 2019, doi: 10.1109/ACCESS.2018.2881042
+
+
+# Functions
+
 We provide a set of transfer learning-based model training and evaluation functions. ImageNet pretrained weights are used.   
 The series of Efficient Net models are supported. 
 There is always a trade-off between model size and accuracy. Our guideline is as follows:     
 For tfjs apps, use EfficientNetB0 or EfficientNetB1; For tf-lite apps, use EfficientNetB2 ~ B4; For desktop apps, use EfficientNetB5 and above. 
 
-The following table is from keras website:
+The following table is from keras website (as of 2022):
 <table>
 <thead>
 <tr>
